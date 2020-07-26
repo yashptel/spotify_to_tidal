@@ -16,12 +16,21 @@ def track_file_name(track, url):
 
 def download_track(tidal_session, track, folder):
     media_url = tidal_session.get_media_url(track.id)
-    file_path = Path(folder) / track_file_name(track, media_url)
+    file_path = Path(folder) / make_safe_filename(track_file_name(track, media_url))
     if file_path.exists():
+        print("Skipping existing file {}".format(str(file_path.name)))
         return
     with tqdm.wrapattr(open(file_path, 'wb+'), "write", miniters=1, desc = "Downloading {}".format(str(file_path.name))) as fout:
         for chunk in requests.get(media_url):
             fout.write(chunk)
+
+def download_playlist(tidal_session, playlist, folder):
+    folder = Path(folder) / make_safe_filename(playlist.name)
+    if not folder.exists():
+        folder.mkdir()
+    print("Save location: {}".format(str(folder)))
+    for track in tidal_session.get_playlist_tracks(playlist.id):
+        download_track(tidal_session, track, folder)
 
 def open_tidal_session(config):
     quality_mapping = {'low': tidalapi.Quality.low, 'high': tidalapi.Quality.high, 'lossless': tidalapi.Quality.lossless}
@@ -29,6 +38,9 @@ def open_tidal_session(config):
     session = tidalapi.Session(tidalapi.Config(quality=quality))
     session.login(config['username'], config['password'])
     return session
+
+def make_safe_filename(name):
+    return name.translate({ord(c): None for c in '\/:*?"<>|'})
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -47,7 +59,8 @@ if __name__ == '__main__':
         sys.exit("Path '{}' does not exist".format(output_folder))
     id = args.uri.split('/')[-1]
     if '-' in id:
-        sys.error("Playlists are not currently supported")
+        playlist = tidal_session.get_playlist(id)
+        download_playlist(tidal_session, playlist, output_folder)
     else:
         track = tidal_session.get_track(id)
         download_track(tidal_session, track, output_folder)
