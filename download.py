@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 
 import argparse
-from mutagen.mp4 import MP4, MP4Cover
 from pathlib import Path
 import requests
 import sys
 import tidalapi
-import tidalapi_patch
-tidalapi_patch.patch()
 from tqdm import tqdm
 import yaml
 
@@ -26,22 +23,6 @@ def download_track(tidal_session, track, folder):
     with tqdm.wrapattr(open(file_path, 'wb+'), "write", miniters=1, desc = "Downloading {}".format(str(file_path.name))) as fout:
         for chunk in requests.get(media_url):
             fout.write(chunk)
-    set_metadata(track, file_path)
-
-def set_metadata(track, filename):
-    if not filename.suffix == '.m4a':
-        # flac not supported yet
-        return
-    tags = MP4(filename).tags
-    tags['\xa9nam'] = "{}{}".format(track.name, " ({})".format(track.version) if track.version else "")
-    tags['\xa9alb'] = track.album.name
-    tags['\xa9ART'] = track.artist.name
-    tags['aART']    = track.album.artist.name
-    tags['\xa9day'] = str(track.album.release_date.year)
-    with requests.get(track.album.picture(320,320)) as result:
-        if result.ok:
-            tags['covr'] = [ MP4Cover(result.content) ]
-    tags.save(filename)
 
 def download_playlist(tidal_session, playlist, folder):
     folder = Path(folder) / make_safe_filename(playlist.name)
