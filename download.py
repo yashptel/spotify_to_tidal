@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 
 import argparse
+from mutagen.mp4 import MP4, MP4Cover
 from pathlib import Path
 import requests
 import sys
 import tidalapi
+import tidalapi_patch
+tidalapi_patch.patch()
 from tqdm import tqdm
 import yaml
 
@@ -23,6 +26,29 @@ def download_track(tidal_session, track, folder):
     with tqdm.wrapattr(open(file_path, 'wb+'), "write", miniters=1, desc = "Downloading {}".format(str(file_path.name))) as fout:
         for chunk in requests.get(media_url):
             fout.write(chunk)
+    return file_path
+
+def download_track_with_metadata(tidal_session, track, folder):
+    file_path = download_track(tidal_session, track, folder)
+    # for some reason Serato thinks the track is corrupt unless the below code
+    # is in a separate function from download_track
+    set_metadata(track, file_path)
+
+def set_metadata(track, filename):
+    if not filename.suffix == '.m4a':
+        # flac not supported yet
+        return
+    f = MP4(str(filename))
+    f.tags.clear()
+    f.tags['\xa9ART'] = track.artist.name
+    f.tags['\xa9nam'] = "{}{}".format(track.name, " ({})".format(track.version) if track.version else "")
+    f.tags['\xa9alb'] = track.album.name
+    if track.album.release_date:
+        f.tags['\xa9day'] = str(track.album.release_date.year)
+    with requests.get(track.album.picture(320,320)) as result:
+        if result.ok:
+            f.tags['covr'] = [ MP4Cover(result.content) ]
+    f.save()
 
 def download_playlist(tidal_session, playlist, folder):
     folder = Path(folder) / make_safe_filename(playlist.name)
@@ -30,7 +56,7 @@ def download_playlist(tidal_session, playlist, folder):
         folder.mkdir()
     print("Save location: {}".format(str(folder)))
     for track in tidal_session.get_playlist_tracks(playlist.id):
-        download_track(tidal_session, track, folder)
+        download_track_with_metadata(tidal_session, track, folder)
 
 def open_tidal_session(config):
     quality_mapping = {'low': tidalapi.Quality.low, 'high': tidalapi.Quality.high, 'lossless': tidalapi.Quality.lossless}
@@ -63,4 +89,5 @@ if __name__ == '__main__':
         download_playlist(tidal_session, playlist, output_folder)
     else:
         track = tidal_session.get_track(id)
-        download_track(tidal_session, track, output_folder)
+        file_path = download_track_with_metadata(tidal_session, track, output_folder)
+
