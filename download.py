@@ -41,7 +41,7 @@ def set_metadata(track, filename):
         return
     f = MP4(str(filename))
     f.tags.clear()
-    f.tags['\xa9ART'] = track.artist.name
+    f.tags['\xa9ART'] = ', '.join([a.name for a in track.artists]) if track.artists else track.artist.name
     f.tags['\xa9nam'] = "{}{}".format(track.name, " ({})".format(track.version) if track.version else "")
     f.tags['\xa9alb'] = track.album.name
     if track.album.release_date:
