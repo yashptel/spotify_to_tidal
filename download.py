@@ -32,7 +32,8 @@ def download_track_with_metadata(tidal_session, track, folder):
     file_path = download_track(tidal_session, track, folder)
     # for some reason Serato thinks the track is corrupt unless the below code
     # is in a separate function from download_track
-    set_metadata(track, file_path)
+    if file_path:
+        set_metadata(track, file_path)
 
 def set_metadata(track, filename):
     if not filename.suffix == '.m4a':
