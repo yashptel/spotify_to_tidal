@@ -14,6 +14,7 @@ from tqdm import tqdm
 import traceback
 import unicodedata
 import yaml
+import pydash
 
 def normalize(s):
     return unicodedata.normalize('NFD', s).encode('ascii', 'ignore').decode('ascii')
@@ -31,6 +32,38 @@ def duration_match(tidal_track, spotify_track, tolerance=2):
     # the duration of the two tracks must be the same to within 2 seconds
     return abs(tidal_track.duration - spotify_track['duration_ms']/1000) < tolerance
 
+def album_artist_match(tidal_track, spotify_track):
+    tidal_album_artists = set(pydash.map_(tidal_track.album.artists, lambda x: x.name.lower()))
+    spotify_album_artists = set(pydash.map_(spotify_track['album']['artists'], lambda x: x['name'].lower()))
+    return tidal_album_artists == spotify_album_artists
+
+
+def album_match(tidal_track, spotify_track):
+    spotify_album = spotify_track['album']['name'].lower()
+    tidal_album_name = tidal_track.album.name.lower()
+    return tidal_album_name == spotify_album
+
+def rough_album_match(tidal_track, spotify_track):
+    spotify_album = pydash.replace(spotify_track['album']['name'].lower(), '’', "'")
+    tidal_album_name = pydash.replace(tidal_track.album.name.lower(), '’', "'")
+    
+    tidal_album_name = pydash.replace(tidal_album_name, 'hopeless fountain kingdom (deluxe plus)', 'hopeless fountain kingdom (deluxe)')
+    tidal_album_name = pydash.replace(tidal_album_name, 'hopeless fountain kingdom (plus)', 'hopeless fountain kingdom (deluxe)')
+    
+    # x = tidal_track
+    
+    # print("Tidal track: ", x.isrc, spotify_track['external_ids']['isrc'], spotify_track['name'], spotify_track['album']['name'], x.name, x.album.name, x.artists[0].name, x.media_metadata_tags, isrc_match(x, spotify_track), rough_album_match(x, spotify_track))
+    
+    # print("Spotify album: ", spotify_album, "Tidal album name: ", tidal_album_name)
+    return spotify_album in tidal_album_name or tidal_album_name in spotify_album
+
+
+def rough_name_match(tidal_track, spotify_track):
+    spotify_track_name = pydash.replace(spotify_track['name'].lower(), '’', "'") 
+    tidal_track_name = pydash.replace(tidal_track.name.lower(), '’', "'")
+    
+    return spotify_track_name in tidal_track_name or tidal_track_name in spotify_track_name
+
 def name_match(tidal_track, spotify_track):
     def exclusion_rule(pattern, tidal_track, spotify_track):
         spotify_has_pattern = pattern in spotify_track['name'].lower()
@@ -41,6 +74,7 @@ def name_match(tidal_track, spotify_track):
     if exclusion_rule("instrumental", tidal_track, spotify_track): return False
     if exclusion_rule("acapella", tidal_track, spotify_track): return False
     if exclusion_rule("remix", tidal_track, spotify_track): return False
+    if exclusion_rule("karaoke", tidal_track, spotify_track): return False
 
     # the simplified version of the Spotify track name must be a substring of the Tidal track name
     # Try with both un-normalized and then normalized
@@ -82,26 +116,207 @@ def artist_match(tidal_track, spotify_track):
     return get_tidal_artists(tidal_track, True).intersection(get_spotify_artists(spotify_track, True)) != set()
 
 def match(tidal_track, spotify_track):
+    
     return isrc_match(tidal_track, spotify_track) or (
         duration_match(tidal_track, spotify_track)
         and name_match(tidal_track, spotify_track)
         and artist_match(tidal_track, spotify_track)
     )
+    
+
+def get_score(tidal_track, spotify_track):
+    score = 0
+    if pydash.find(tidal_track.media_metadata_tags, lambda x: x == 'DOLBY_ATMOS'):
+        score -= 5
+    if pydash.find(tidal_track.media_metadata_tags, lambda x: x == 'HIRES_LOSSLESS'):
+        score += 3
+    if pydash.find(tidal_track.media_metadata_tags, lambda x: x == 'MQA'):
+        score += 2
+    if pydash.find(tidal_track.media_metadata_tags, lambda x: x == 'LOSSLESS'):
+        score += 1
+    return score
+
+
+
+def matches(tidal_tracks, spotify_track):
+
+    # print("Spotify track: ", spotify_track['name'], spotify_track['artists'][0]['name'], spotify_track['album']['name'], spotify_track['track_number'], spotify_track['external_ids']['isrc'])
+    # tracks = pydash.filter_(tidal_tracks, lambda x: album_match(x, spotify_track))
+    
+    # print("Tidal tracks(matches): ", len(tracks))
+    # pydash.for_each(tracks, lambda x: print("Spotify track: ", spotify_track['name'], spotify_track['album']['name'], spotify_track['external_ids']['isrc'],  x.isrc, x.album.name, x.name, x.artists[0].name, x.media_metadata_tags, isrc_match(x, spotify_track), album_match(x, spotify_track)))
+    
+    tracks = pydash.filter_(tidal_tracks, lambda x: isrc_match(x, spotify_track) and album_match(x, spotify_track))
+    print("Tidal tracks(matches): ", spotify_track['name'], len(tracks))
+    tracks = pydash.sort_by(tracks, lambda x: get_score(x, spotify_track), reverse=True)
+    
+    
+    # pydash.for_each(tidal_tracks, lambda x: print("Tidal track: ", x.isrc, spotify_track['external_ids']['isrc'], spotify_track['name'], spotify_track['album']['name'], x.name, x.album.name, x.artists[0].name, x.media_metadata_tags, isrc_match(x, spotify_track), rough_album_match(x, spotify_track)))
+    
+    
+    # print("Tidal tracks(rough_matches): ", len(tracks))
+    # tracks = pydash.map_(tracks, lambda x: [x, get_score(x)])
+    # tracks = pydash.order_by(tracks, lambda x: x[1], reverse=True)
+    
+    # pydash.for_each(tracks, lambda x: print("Tidal track: ", x[0].isrc, spotify_track['external_ids']['isrc'], spotify_track['name'], spotify_track['album']['name'], x[0].name, x[0].album.name, x[0].artists[0].name, x[0].media_metadata_tags, isrc_match(x[0], spotify_track), rough_album_match(x[0], spotify_track)))
+    
+    if len(tracks) > 0:
+        # print("Found match by ISRC and album name - tracks", tracks[0].isrc, tracks[0].album.name, tracks[0].name, tracks[0].media_metadata_tags)
+        return tracks[0]
+    return None
+
+    # return pydash.find(
+    #     tidal_tracks, lambda x: pydash.find(x.media_metadata_tags, lambda y: y == 'HIRES_LOSSLESS') and isrc_match(x, spotify_track) and album_match(x, spotify_track)) or pydash.find(
+    #     tidal_tracks, lambda x: pydash.find(x.media_metadata_tags, lambda y: y == 'MQA') and isrc_match(x, spotify_track) and album_match(x, spotify_track)) or pydash.find(
+    #     tidal_tracks, lambda x: pydash.find(x.media_metadata_tags, lambda y: y == 'LOSSLESS') and isrc_match(x, spotify_track) and album_match(x, spotify_track))
+        
+        
+
+def merge(tracks_arr1, tracks_arr2, spotify_track):
+    res = []
+    
+    i = 0
+    j = 0
+    
+    while i < len(tracks_arr1) and j < len(tracks_arr2):
+        if get_score(tracks_arr1[i], spotify_track) >= get_score(tracks_arr2[j], spotify_track):
+            res.append(tracks_arr1[i])
+            i += 1
+        else:
+            res.append(tracks_arr2[j])
+            j += 1
+
+    while i < len(tracks_arr1):
+        res.append(tracks_arr1[i])
+        i += 1
+
+    while j < len(tracks_arr2):
+        res.append(tracks_arr2[j])
+        j += 1
+    
+    return res
+        
+
+def rough_matches(tidal_tracks, spotify_track):
+
+    # print("Spotify track: ", spotify_track['name'], spotify_track['artists'][0]['name'], spotify_track['album']['name'], spotify_track['track_number'], spotify_track['external_ids']['isrc'])
+    # pydash.for_each(tidal_tracks, lambda x: print("Spotify track: ", spotify_track['name'], spotify_track['album']['name'], spotify_track['external_ids']['isrc'],  x.isrc, x.album.name, x.name, x.artists[0].name, x.media_metadata_tags, isrc_match(x, spotify_track), album_match(x, spotify_track)))
+    
+    # pydash.for_each(tidal_tracks, lambda x: print("Tidal track: ", x.isrc, spotify_track['external_ids']['isrc'], spotify_track['name'], spotify_track['album']['name'], x.name, x.album.name, x.artists[0].name, x.media_metadata_tags, isrc_match(x, spotify_track), rough_album_match(x, spotify_track)))
+    
+    # tracks = pydash.filter_(tidal_tracks, lambda x: rough_album_match(x, spotify_track))
+    # pydash.for_each(tracks, lambda x: print("Tidal track: ", x.isrc, spotify_track['external_ids']['isrc'], spotify_track['name'], spotify_track['album']['name'], x.name, x.album.name, x.artists[0].name, x.media_metadata_tags, match(x, spotify_track), rough_album_match(x, spotify_track)))
+    # print("Tidal tracks(rough_matches): ", len(tracks))
+    
+    # tracks = pydash.filter_(tidal_tracks, lambda x: isrc_match(x, spotify_track))
+    
+    
+    tracks_arr1 = pydash.filter_(tidal_tracks, lambda x: match(x, spotify_track) and rough_album_match(x, spotify_track))
+    tracks_arr2 = pydash.filter_(tidal_tracks, lambda x: isrc_match(x, spotify_track) and album_artist_match(x, spotify_track))
+    
+    tracks = merge(tracks_arr1, tracks_arr2, spotify_track)
+    
+    print("Tidal tracks(rough_matches): ", spotify_track['name'], len(tracks))
+    
+    tracks = pydash.sort_by(tracks, lambda x: get_score(x, spotify_track), reverse=True)
+    
+    # tracks = pydash.map_(tracks, lambda x: [x, get_score(x)])
+    # tracks = pydash.order_by(tracks, lambda x: x[1], reverse=True)
+    
+    # pydash.for_each(tracks, lambda x: print("Tidal track: ", x[0].isrc, spotify_track['external_ids']['isrc'], spotify_track['name'], spotify_track['album']['name'], x[0].name, x[0].album.name, x[0].artists[0].name, x[0].media_metadata_tags, isrc_match(x[0], spotify_track), rough_album_match(x[0], spotify_track)))
+    
+    
+    
+    if len(tracks) > 0:            
+        # print("Found match by ISRC and album name - tracks", tracks[0].isrc, tracks[0].album.name, tracks[0].name, tracks[0].media_metadata_tags)
+        return tracks[0]
+    return None
+
+    # return pydash.find(
+    #     tidal_tracks, lambda x: pydash.find(x.media_metadata_tags, lambda y: y == 'HIRES_LOSSLESS') and isrc_match(x, spotify_track) and rough_album_match(x, spotify_track)) or pydash.find(
+    #     tidal_tracks, lambda x: pydash.find(x.media_metadata_tags, lambda y: y == 'MQA') and isrc_match(x, spotify_track) and rough_album_match(x, spotify_track)) or pydash.find(
+    #     tidal_tracks, lambda x: pydash.find(x.media_metadata_tags, lambda y: y == 'LOSSLESS') and isrc_match(x, spotify_track) and rough_album_match(x, spotify_track))
+        
+def rough_matches_by_name(tidal_tracks, spotify_track):
+
+    # print("Spotify track: ", spotify_track['name'], spotify_track['artists'][0]['name'], spotify_track['album']['name'], spotify_track['track_number'], spotify_track['external_ids']['isrc'])
+    # pydash.for_each(tidal_tracks, lambda x: print("Spotify track: ", spotify_track['name'], spotify_track['album']['name'], spotify_track['external_ids']['isrc'],  x.isrc, x.album.name, x.name, x.artists[0].name, x.media_metadata_tags, isrc_match(x, spotify_track), album_match(x, spotify_track)))
+    
+    # pydash.for_each(tidal_tracks, lambda x: print("Tidal track: ", x.isrc, spotify_track['external_ids']['isrc'], spotify_track['name'], spotify_track['album']['name'], x.name, x.album.name, x.artists[0].name, x.media_metadata_tags, rough_name_match(x, spotify_track), rough_album_match(x, spotify_track)))
+
+    return pydash.find(
+        tidal_tracks, lambda x: pydash.find(x.media_metadata_tags, lambda y: y == 'HIRES_LOSSLESS') and rough_name_match(x, spotify_track) and rough_album_match(x, spotify_track)) or pydash.find(
+        tidal_tracks, lambda x: pydash.find(x.media_metadata_tags, lambda y: y == 'MQA') and rough_name_match(x, spotify_track) and rough_album_match(x, spotify_track)) or pydash.find(
+        tidal_tracks, lambda x: pydash.find(x.media_metadata_tags, lambda y: y == 'LOSSLESS') and rough_name_match(x, spotify_track) and rough_album_match(x, spotify_track))
+ 
+
+def matches_artist_name(tidal_tracks, spotify_track):
+    return pydash.find(
+        tidal_tracks, lambda x: pydash.find(x.media_metadata_tags, lambda y: y == 'HIRES_LOSSLESS') and isrc_match(x, spotify_track) and album_artist_match(x, spotify_track)) or pydash.find(
+        tidal_tracks, lambda x: pydash.find(x.media_metadata_tags, lambda y: y == 'MQA') and isrc_match(x, spotify_track) and album_artist_match(x, spotify_track)) or pydash.find(
+        tidal_tracks, lambda x: pydash.find(x.media_metadata_tags, lambda y: y == 'LOSSLESS') and isrc_match(x, spotify_track) and album_artist_match(x, spotify_track))
 
 
 def tidal_search(spotify_track_and_cache, tidal_session):
     spotify_track, cached_tidal_track = spotify_track_and_cache
     if cached_tidal_track: return cached_tidal_track
     # search for album name and first album artist
+    # print(json.dumps(spotify_track, indent=4))
     if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
-        album_result = tidal_session.search(simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name']), models=[tidalapi.album.Album])
+        album_result = tidal_session.search((spotify_track['album']['name']) + " " + (spotify_track['album']['artists'][0]['name']), models=[tidalapi.album.Album])
+        tracks = tidal_session.search((spotify_track['name']) + ' ' + (spotify_track['artists'][0]['name']), models=[tidalapi.media.Track])['tracks']
+        
+        # pydash.for_each(album_result['albums'], lambda x: print(x.name, spotify_track['album']['name']))
+        
+        all_album_tracks = pydash.flatten(pydash.map_(album_result['albums'], lambda x: x.tracks()))
+        all_tracks = pydash.concat(tracks, all_album_tracks)
+        
+        
+        
+        # pydash.map_(pydash.filter_(album_result['albums'], lambda x: x.name == spotify_track['album']['name']), lambda x: print(x.name))
+        
+        # print('Length of album result', len(pydash.filter_(album_result['albums'], lambda x: x.name == spotify_track['album']['name'])[1].tracks()))
+        
+        # album_tracks = pydash.flatten(pydash.map_(pydash.filter_(album_result['albums'], lambda x: x.name == spotify_track['album']['name']), lambda x: x.tracks()))
+        # print('Length of album tracks', len(album_tracks))
+        
+        # if spotify_track['album']['name'] == 'Dua Lipa':
+        #     print("Album tracks", pydash.map_(album_tracks, lambda x: x.name))
+        
+        if all_tracks:
+            # res = matches(album_tracks, spotify_track)
+            res = matches(all_tracks, spotify_track) or rough_matches(all_tracks, spotify_track)
+            if res:        
+                print("Found match by ISRC and album name - album", res.isrc, res.album.name, res.name, res.media_metadata_tags)
+                return res
+        
         for album in album_result['albums']:
             album_tracks = album.tracks()
             if len(album_tracks) >= spotify_track['track_number']:
                 track = album_tracks[spotify_track['track_number'] - 1]
-                if match(track, spotify_track):
+                # print(json.dumps(track.__dict__, indent=4, sort_keys=True, default=str))
+                if match(track, spotify_track) and album_match(track, spotify_track):
                     return track
+
     # if that fails then search for track name and first artist
+    
+    tracks = tidal_session.search(simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name']), models=[tidalapi.media.Track])['tracks']
+    res = matches(tracks, spotify_track) or matches_artist_name(tracks, spotify_track)
+    if res:
+        # print("Found match by ISRC and album name", json.dumps(res.__dict__, indent=4, sort_keys=True, default=str))
+        print("Found match by ISRC and album name - tracks", res.isrc, res.album.name, res.name, res.media_metadata_tags)
+        return res
+    
+    for track in tidal_session.search(simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name']), models=[tidalapi.media.Track])['tracks']:
+        # print(json.dumps(track, indent=4))
+        
+        # loop over keys in track object
+        # for key in track.__dict__.keys():
+        #     print("Key: {0}, Value: {1}".format(key, track[key]))
+                  
+        
+        if match(track, spotify_track) and album_match(track, spotify_track):
+            return track
     for track in tidal_session.search(simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name']), models=[tidalapi.media.Track])['tracks']:
         if match(track, spotify_track):
             return track
@@ -183,11 +398,11 @@ class TidalPlaylistCache:
         work_to_do = False
         spotify_tracks = get_tracks_from_spotify_playlist(spotify_session, spotify_playlist)
         for track in spotify_tracks:
-            cached_track = self._search(track)
-            if cached_track:
-                results.append( (track, cached_track) )
-                cache_hits += 1
-            else:
+            # cached_track = self._search(track)
+            # if cached_track:
+            #     results.append( (track, cached_track) )
+            #     cache_hits += 1
+            # else:
                 results.append( (track, None) )
         return (results, cache_hits)
 
@@ -227,7 +442,7 @@ def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id, config):
         return
 
     task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(spotify_tracks) - cache_hits, len(spotify_tracks), spotify_playlist['name'])
-    tidal_tracks = call_async_with_progress(tidal_search, spotify_tracks, task_description, config.get('subprocesses', 50), tidal_session=tidal_session)
+    tidal_tracks = call_async_with_progress(tidal_search, spotify_tracks, task_description, config.get('subprocesses', 5), tidal_session=tidal_session)
     for index, tidal_track in enumerate(tidal_tracks):
         spotify_track = spotify_tracks[index][0]
         if tidal_track:
