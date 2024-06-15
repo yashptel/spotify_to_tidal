@@ -18,6 +18,7 @@ from tqdm import tqdm
 import traceback
 import unicodedata
 import math
+import pydash
 
 from .type import spotify as t_spotify
 
@@ -95,10 +96,98 @@ def match(tidal_track, spotify_track) -> bool:
         and artist_match(tidal_track, spotify_track)
     )
 
-def test_album_similarity(spotify_album, tidal_album, threshold=0.6):
+def test_album_similarity(spotify_album, tidal_album, threshold=0.9):
     return SequenceMatcher(None, simple(spotify_album['name']), simple(tidal_album.name)).ratio() >= threshold and artist_match(tidal_album, spotify_album)
 
+def album_match(tidal_track, spotify_track):
+    spotify_album = spotify_track['album']['name'].lower()
+    tidal_album_name = tidal_track.album.name.lower()
+    return tidal_album_name == spotify_album
+
+def matches(tidal_tracks, spotify_track):
+    tracks = pydash.filter_(tidal_tracks, lambda x: isrc_match(x, spotify_track) and album_match(x, spotify_track))
+    tracks = pydash.sort_by(tracks, lambda x: get_score(x, spotify_track), reverse=True)
+    if len(tracks) > 0:
+        return tracks[0]
+    return None
+
+def get_score(tidal_track, spotify_track):
+    score = 0
+    
+    if isrc_match(tidal_track, spotify_track) :
+        score += 1
+    if pydash.find(tidal_track.media_metadata_tags, lambda x: x == 'DOLBY_ATMOS'):
+        score -= 5
+    if pydash.find(tidal_track.media_metadata_tags, lambda x: x == 'HIRES_LOSSLESS'):
+        score += 3
+    if pydash.find(tidal_track.media_metadata_tags, lambda x: x == 'MQA'):
+        score += 2
+    if pydash.find(tidal_track.media_metadata_tags, lambda x: x == 'LOSSLESS'):
+        score += 1
+    return score
+
+def merge(tracks_arr1, tracks_arr2, spotify_track):
+    res = []
+    
+    i = 0
+    j = 0
+    
+    while i < len(tracks_arr1) and j < len(tracks_arr2):
+        if get_score(tracks_arr1[i], spotify_track) >= get_score(tracks_arr2[j], spotify_track):
+            res.append(tracks_arr1[i])
+            i += 1
+        else:
+            res.append(tracks_arr2[j])
+            j += 1
+
+    while i < len(tracks_arr1):
+        res.append(tracks_arr1[i])
+        i += 1
+
+    while j < len(tracks_arr2):
+        res.append(tracks_arr2[j])
+        j += 1
+    
+    return res
+
+def rough_album_match(tidal_track, spotify_track):
+    spotify_album = pydash.replace(spotify_track['album']['name'].lower(), '’', "'")
+    tidal_album_name = pydash.replace(tidal_track.album.name.lower(), '’', "'")
+    tidal_album_name = pydash.replace(tidal_album_name, 'hopeless fountain kingdom (deluxe plus)', 'hopeless fountain kingdom (deluxe)')
+    tidal_album_name = pydash.replace(tidal_album_name, 'hopeless fountain kingdom (plus)', 'hopeless fountain kingdom (deluxe)')
+    return spotify_album in tidal_album_name or tidal_album_name in spotify_album
+
+def album_artist_match(tidal_track, spotify_track):
+    tidal_album_artists = set(pydash.map_(tidal_track.album.artists, lambda x: x.name.lower()))
+    spotify_album_artists = set(pydash.map_(spotify_track['album']['artists'], lambda x: x['name'].lower()))
+    return tidal_album_artists == spotify_album_artists
+
+def rough_matches(tidal_tracks, spotify_track):
+    tracks_arr1 = pydash.sort_by( pydash.filter_(tidal_tracks, lambda x: isrc_match(x, spotify_track) and album_artist_match(x, spotify_track)), lambda x: get_score(x, spotify_track), reverse=True)
+    tracks_arr2 = pydash.sort_by( pydash.filter_(tidal_tracks, lambda x: match(x, spotify_track) and rough_album_match(x, spotify_track)), lambda x: get_score(x, spotify_track), reverse=True)
+    tracks = merge(tracks_arr1, tracks_arr2, spotify_track)  
+    if len(tracks) > 0:
+        return tracks[0]
+    return None
+
+
 async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Session) -> tidalapi.Track | None:
+    
+    def _search_for_track_in_album_or_standalone():
+        album_query = simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name'])
+        track_query = simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name'])
+        
+        album_result = tidal_session.search(album_query, models=[tidalapi.album.Album])
+        tracks = tidal_session.search(track_query, models=[tidalapi.media.Track])['tracks']
+        
+        all_album_tracks = pydash.flatten(pydash.map_(album_result['albums'], lambda x: x.tracks()))
+        all_tracks = pydash.concat(tracks, all_album_tracks)
+
+        if all_tracks:
+            res = matches(all_tracks, spotify_track) or rough_matches(all_tracks, spotify_track)
+            if res:
+                return res
+            
     def _search_for_track_in_album():
         # search for album name and first album artist
         if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
@@ -123,6 +212,11 @@ async def tidal_search(spotify_track, rate_limiter, tidal_session: tidalapi.Sess
                 failure_cache.remove_match_failure(spotify_track['id'])
                 return track
     await rate_limiter.acquire()
+    
+    hybrid_search = await asyncio.to_thread( _search_for_track_in_album_or_standalone )
+    if hybrid_search:
+        return hybrid_search
+    
     album_search = await asyncio.to_thread( _search_for_track_in_album )
     if album_search:
         return album_search
