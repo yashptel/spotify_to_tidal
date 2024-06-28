@@ -44,4 +44,8 @@ jobs:
 
     - name: Sync Spotify playlists
       run: |
-        spotify_to_tidal --uri 0Sb5d3YXIGSKyvNSt15hb6
+        spotify_to_tidal --uri 37i9dQZF1DXcBWIGoYBM5M
+        spotify_to_tidal --uri 37i9dQZEVXbMDoHDwVN2tF
+        spotify_to_tidal --uri 37i9dQZF1DX5Ejj0EkURtP
+        spotify_to_tidal --uri 37i9dQZF1DWWMOmoXKqHTD
+        spotify_to_tidal --uri 37i9dQZF1DX2L0iB23Enbq
