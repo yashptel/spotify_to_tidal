@@ -5,7 +5,7 @@ name: Python application
 
 on:
   schedule:
-    - cron: '37 2 * * *'
+    - cron: '37 2 * * 0,2,4,6'
   
   workflow_dispatch:  # This allows manual triggering
 
@@ -45,7 +45,13 @@ jobs:
     - name: Sync Spotify playlists
       run: |
         spotify_to_tidal --uri 37i9dQZF1DXcBWIGoYBM5M
+        sleep 5
         spotify_to_tidal --uri 37i9dQZEVXbMDoHDwVN2tF
+        sleep 5
         spotify_to_tidal --uri 37i9dQZF1DX5Ejj0EkURtP
+        sleep 5
         spotify_to_tidal --uri 37i9dQZF1DWWMOmoXKqHTD
+        sleep 5
         spotify_to_tidal --uri 37i9dQZF1DX2L0iB23Enbq
+        sleep 5
+        spotify_to_tidal --uri 1suLQgq5ZlQ4DpQMh0SZtw
