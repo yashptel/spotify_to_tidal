@@ -46,6 +46,8 @@ jobs:
       run: |
         spotify_to_tidal --uri 37i9dQZF1DXcBWIGoYBM5M
         sleep 5
+        spotify_to_tidal --uri 2cafL7Qoy7DiT9RmwSp3S8
+        sleep 5
         spotify_to_tidal --uri 2xutOn4Ea4RyjuaRaD3jl3
         sleep 5
         spotify_to_tidal --uri 37i9dQZEVXbMDoHDwVN2tF
